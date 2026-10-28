@@ -23,11 +23,12 @@ parse_price <- function(x) {
   )
 }
 
-# 2. Chuyen khoi luong K/M sang so
+# 2. Chuyen khoi luong K/M/B sang so
 parse_volume <- function(x) {
   x <- str_trim(as.character(x))
   
   multiplier <- case_when(
+    str_detect(x, regex("B$", ignore_case = TRUE)) ~ 1e9,
     str_detect(x, regex("M$", ignore_case = TRUE)) ~ 1e6,
     str_detect(x, regex("K$", ignore_case = TRUE)) ~ 1e3,
     TRUE ~ 1
@@ -183,8 +184,6 @@ summary(data_merged[, c(
   "KDH_Close", "NLG_Close",
   "VNIndex_Close"
 )])
-
-
 
 
 

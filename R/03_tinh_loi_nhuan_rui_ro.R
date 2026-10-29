@@ -222,7 +222,7 @@ write.csv(
   na = ""
 )
 
-# 8. THONG BAO KET QUA ---------------------------------------
+# 8. THONG BAO KET QUA
 
 cat("\n===== THONG KE TUNG MA =====\n")
 print(summary_stock)

@@ -1,0 +1,258 @@
+---
+title: "BÁO CÁO TÍNH LỢI NHUẬN VÀ RỦI RO CỔ PHIẾU"
+author: "VŨ THỊ LINH"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+output:
+  word_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Xac dinh thu muc goc cua project
+project_dir <- "D:/PhanTich_CoPhieu"
+
+# Dat thu muc chay code la thu muc goc project
+knitr::opts_knit$set(root.dir = project_dir)
+
+input_file <- file.path(
+  project_dir,
+  "Data",
+  "processed",
+  "du_lieu_sach.csv"
+)
+
+output_dir <- file.path(project_dir, "Output", "tables")
+
+if (!file.exists(input_file)) {
+  stop("Khong tim thay file du lieu: ", input_file)
+}
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+# 1. Mục tiêu
+
+Báo cáo tính lợi nhuận hằng ngày, thống kê lợi nhuận và rủi ro của HPG, HSG, KDH, NLG và VN-Index; sau đó so sánh nhóm ngành thép, bất động sản và VN-Index.
+
+# 2. Đọc và kiểm tra dữ liệu
+
+```{r doc-du-lieu}
+df <- read.csv(input_file, stringsAsFactors = FALSE, check.names = FALSE)
+
+required_cols <- c("Date", "HPG_Close", "HSG_Close",
+                   "KDH_Close", "NLG_Close", "VNIndex_Close")
+missing_cols <- setdiff(required_cols, names(df))
+if (length(missing_cols) > 0) {
+  stop("Thieu cot trong file du lieu: ", paste(missing_cols, collapse = ", "))
+}
+
+df$Date <- as.Date(df$Date)
+if (any(is.na(df$Date))) stop("Co ngay giao dich khong doc duoc.")
+df <- df[order(df$Date), ]
+if (anyDuplicated(df$Date) > 0) stop("Phat hien ngay giao dich trung lap.")
+
+assets <- c("HPG", "HSG", "KDH", "NLG", "VNIndex")
+price_cols <- c(HPG = "HPG_Close", HSG = "HSG_Close",
+                KDH = "KDH_Close", NLG = "NLG_Close",
+                VNIndex = "VNIndex_Close")
+prices <- df[, price_cols, drop = FALSE]
+prices[] <- lapply(prices, function(x) as.numeric(as.character(x)))
+
+if (any(!is.finite(as.matrix(prices)))) stop("Du lieu gia co NA, Inf hoac gia tri khong hop le.")
+if (any(as.matrix(prices) <= 0)) stop("Phat hien gia <= 0.")
+
+data.frame(So_quan_sat = nrow(df),
+           Ngay_bat_dau = min(df$Date),
+           Ngay_ket_thuc = max(df$Date),
+           So_ngay_trung = anyDuplicated(df$Date))
+```
+  
+# 3. Tính lợi nhuận hằng ngày
+
+Công thức lợi nhuận đơn: \(R_t = P_t/P_{t-1} - 1\), trong đó \(P_t\) là giá đóng cửa ngày hiện tại.
+
+```{r loi-nhuan-hang-ngay}
+returns <- prices[-1, , drop = FALSE] /
+  prices[-nrow(prices), , drop = FALSE] - 1
+returns <- as.data.frame(returns)
+names(returns) <- assets
+returns <- data.frame(Date = df$Date[-1], returns, check.names = FALSE)
+
+write.csv(returns, file.path(output_dir, "loi_nhuan_hang_ngay.csv"),
+          row.names = FALSE, na = "")
+knitr::kable(head(returns, 10), digits = 6,
+             caption = "10 dòng đầu của lợi nhuận hằng ngày")
+```
+
+Toàn bộ dữ liệu theo ngày được lưu trong CSV, báo cáo chỉ hiển thị 10 dòng đầu để tránh quá dài.
+
+- File đầy đủ: `Output/tables/loi_nhuan_hang_ngay.csv`
+
+**Nhận xét lợi nhuận hằng ngày**
+*Qua bảng số liệu, lợi nhuận hằng ngày của các mã cổ phiếu HPG, HSG, KDH, NLG và VN-Index có sự biến động theo thời gian, đồng thời mức tăng giảm giữa các mã không hoàn toàn giống nhau. Trong những phiên đầu tháng 1/2021, phần lớn các mã ghi nhận lợi nhuận dương. Đáng chú ý, ngày 06/01/2021, NLG có lợi nhuận khoảng 6,88%, cao nhất trong số các mã ở phiên này. Ngược lại, ngày 19/01/2021, cả bốn cổ phiếu và VN-Index đều có lợi nhuận âm; trong đó HPG giảm khoảng 6,73%, còn VN-Index giảm khoảng 5,11%. Điều này cho thấy lợi nhuận cổ phiếu có thể biến động mạnh và các mã có thể cùng tăng hoặc giảm trong một số phiên giao dịch. Tuy nhiên, cần phân tích toàn bộ giai đoạn 2021–2025 để đưa ra kết luận đầy đủ về xu hướng lợi nhuận, thay vì chỉ dựa vào một số ngày đầu kỳ.*
+
+
+# 4. Thống kê lợi nhuận và rủi ro từng mã
+
+- Lợi nhuận trung bình ngày: trung bình lợi nhuận mỗi phiên.
+- Độ lệch chuẩn ngày: mức độ biến động của lợi nhuận mỗi phiên.
+- Lợi nhuận trung bình năm xấp xỉ: lợi nhuận trung bình ngày nhân 252.
+- Độ lệch chuẩn năm: độ lệch chuẩn ngày nhân căn bậc hai của 252.
+- Maximum Drawdown (MDD): mức sụt giảm lớn nhất từ đỉnh giá trước đó.
+
+```{r thong-ke-tung-ma}
+calc_mdd <- function(price_series) {
+  running_peak <- cummax(price_series)
+  drawdown <- price_series / running_peak - 1
+  min(drawdown, na.rm = TRUE)
+}
+
+summary_stock <- data.frame(
+  Ma = assets,
+  Loi_nhuan_trung_binh_ngay = NA_real_,
+  Do_lech_chuan_ngay = NA_real_,
+  Loi_nhuan_trung_binh_nam_xap_xi = NA_real_,
+  Do_lech_chuan_nam = NA_real_,
+  Maximum_Drawdown = NA_real_
+)
+
+for (i in seq_along(assets)) {
+  asset <- assets[i]
+  r <- returns[[asset]]
+  p <- prices[[price_cols[[asset]]]]
+  summary_stock$Loi_nhuan_trung_binh_ngay[i] <- mean(r, na.rm = TRUE)
+  summary_stock$Do_lech_chuan_ngay[i] <- sd(r, na.rm = TRUE)
+  summary_stock$Loi_nhuan_trung_binh_nam_xap_xi[i] <- mean(r, na.rm = TRUE) * 252
+  summary_stock$Do_lech_chuan_nam[i] <- sd(r, na.rm = TRUE) * sqrt(252)
+  summary_stock$Maximum_Drawdown[i] <- calc_mdd(p)
+}
+
+numeric_cols_stock <- vapply(summary_stock, is.numeric, logical(1))
+summary_stock[numeric_cols_stock] <- lapply(summary_stock[numeric_cols_stock], round, 6)
+
+write.csv(summary_stock,
+          file.path(output_dir, "thong_ke_loi_nhuan_rui_ro_tung_ma.csv"),
+          row.names = FALSE, na = "")
+knitr::kable(summary_stock, digits = 6,
+             caption = "Thống kê lợi nhuận và rủi ro của từng mã")
+```
+
+- File đầy đủ: `Output/tables/thong_ke_loi_nhuan_rui_ro_tung_ma.csv`
+
+**Nhận xét từng mã:**
+
+*Dựa trên bảng thống kê giai đoạn 2021–2025, các mã cổ phiếu có sự khác biệt về lợi nhuận và mức độ rủi ro.*
+
+*Về lợi nhuận, KDH có lợi nhuận trung bình ngày cao nhất, đạt 0,069%, tương ứng mức lợi nhuận trung bình năm xấp xỉ 17,38%. Ngược lại, HSG có lợi nhuận trung bình ngày thấp nhất, khoảng 0,0376%, tương ứng 9,48%/năm. HPG và NLG lần lượt có lợi nhuận trung bình năm xấp xỉ 13,70% và 14,95%. VN-Index đạt khoảng 11,41%/năm.*
+
+*Về mức độ biến động, HSG có độ lệch chuẩn năm cao nhất, đạt 45,62%, tiếp theo là NLG với 42,76%. Điều này cho thấy lợi nhuận của hai mã này biến động mạnh hơn so với các mã còn lại trong bảng. Trong khi đó, VN-Index có độ lệch chuẩn năm thấp nhất, ở mức 19,93%, cho thấy mức biến động lợi nhuận thấp hơn các cổ phiếu riêng lẻ trong giai đoạn nghiên cứu.*
+
+*Xét chỉ tiêu Maximum Drawdown (MDD), HSG có mức sụt giảm lớn nhất, đạt -82,31%, tiếp theo là NLG với -72,59%, HPG với -72,43% và KDH với -63,20%. VN-Index có MDD thấp hơn về độ sâu sụt giảm, ở mức -40,34%. Kết quả này cho thấy các cổ phiếu riêng lẻ đã trải qua những giai đoạn giảm sâu hơn chỉ số thị trường trong giai đoạn phân tích.*
+
+*Nhìn chung, KDH có lợi nhuận trung bình cao nhất và MDD ít âm nhất trong bốn cổ phiếu, trong khi HSG có lợi nhuận trung bình thấp nhất, độ biến động cao nhất và mức sụt giảm sâu nhất. VN-Index có lợi nhuận trung bình thấp hơn KDH, HPG và NLG nhưng có độ biến động và MDD thấp hơn các cổ phiếu riêng lẻ. Điều này cho thấy lợi nhuận cao hơn không đồng nghĩa với rủi ro thấp hơn. *
+
+
+
+# 5. So sánh ngành thép, bất động sản và VN-Index
+
+Lợi nhuận đại diện ngành được tính bằng trung bình cộng lợi nhuận hằng ngày của hai cổ phiếu trong ngành, giả định trọng số bằng nhau.
+
+```{r loi-nhuan-theo-nganh}
+industry_returns <- data.frame(
+  Date = returns$Date,
+  Thep = rowMeans(returns[, c("HPG", "HSG")], na.rm = FALSE),
+  Bat_dong_san = rowMeans(returns[, c("KDH", "NLG")], na.rm = FALSE),
+  VNIndex = returns$VNIndex
+)
+
+write.csv(industry_returns,
+          file.path(output_dir, "loi_nhuan_hang_ngay_theo_nganh.csv"),
+          row.names = FALSE, na = "")
+knitr::kable(head(industry_returns, 10), digits = 6,
+             caption = "10 dòng đầu của lợi nhuận hằng ngày theo ngành")
+```
+
+- File đầy đủ: `Output/tables/loi_nhuan_hang_ngay_theo_nganh.csv`
+
+```{r thong-ke-theo-nganh}
+calc_return_stats <- function(r, initial_wealth = 1) {
+  wealth <- c(initial_wealth, cumprod(1 + r))
+  running_peak <- cummax(wealth)
+  drawdown <- wealth / running_peak - 1
+  c(
+    Loi_nhuan_trung_binh_ngay = mean(r, na.rm = TRUE),
+    Do_lech_chuan_ngay = sd(r, na.rm = TRUE),
+    Loi_nhuan_trung_binh_nam_xap_xi = mean(r, na.rm = TRUE) * 252,
+    Do_lech_chuan_nam = sd(r, na.rm = TRUE) * sqrt(252),
+    Maximum_Drawdown = min(drawdown, na.rm = TRUE)
+  )
+}
+
+industry_stats <- rbind(
+  Thep = calc_return_stats(industry_returns$Thep),
+  Bat_dong_san = calc_return_stats(industry_returns$Bat_dong_san),
+  VNIndex = calc_return_stats(industry_returns$VNIndex)
+)
+industry_stats <- data.frame(Nhom = rownames(industry_stats),
+                             industry_stats, row.names = NULL,
+                             check.names = FALSE)
+
+numeric_cols_industry <- vapply(industry_stats, is.numeric, logical(1))
+industry_stats[numeric_cols_industry] <- lapply(industry_stats[numeric_cols_industry], round, 6)
+
+write.csv(industry_stats,
+          file.path(output_dir, "so_sanh_loi_nhuan_rui_ro_theo_nganh.csv"),
+          row.names = FALSE, na = "")
+knitr::kable(industry_stats, digits = 6,
+             caption = "So sánh lợi nhuận và rủi ro theo ngành")
+```
+
+- File đầy đủ: `Output/tables/so_sanh_loi_nhuan_rui_ro_theo_nganh.csv`
+
+**Nhận xét so sánh ngành**
+
+*1. Ngành nào có lợi nhuận trung bình ngày/năm xấp xỉ cao hơn?*
+*Ngành Bất động sản có lợi nhuận trung bình cao hơn ngành Thép. Cụ thể, lợi nhuận trung bình ngày của Bất động sản đạt 0,0641%, so với 0,0460% của ngành Thép. Lợi nhuận trung bình năm xấp xỉ tương ứng là 16,16% và 11,59%. Như vậy, trong giai đoạn nghiên cứu, ngành Bất động sản có khả năng sinh lời trung bình cao hơn.*
+
+*2. Ngành nào có độ lệch chuẩn năm thấp hơn?*
+*Ngành Bất động sản có độ lệch chuẩn năm thấp hơn, ở mức 35,76%, so với 37,57% của ngành Thép. Điều này cho thấy lợi nhuận ngành Bất động sản biến động ít hơn ngành Thép. Tuy nhiên, cả hai ngành đều có độ biến động cao hơn VN-Index, với độ lệch chuẩn năm là 19,93%.*
+
+*3. MDD của hai ngành khác nhau thế nào so với VN-Index?*
+*MDD (Maximum Drawdown) của ngành Thép là -77,09%, ngành Bất động sản là -67,43%, trong khi VN-Index là -40,34%. Như vậy, cả hai ngành đều có mức sụt giảm tối đa lớn hơn đáng kể so với thị trường chung. Ngành Thép có mức sụt giảm sâu nhất, tiếp đến là Bất động sản; VN-Index có mức sụt giảm thấp nhất trong ba đối tượng.*
+
+*4. Kết quả cho thấy sự đánh đổi giữa lợi nhuận và rủi ro ra sao?*
+*Kết quả cho thấy sự đánh đổi giữa lợi nhuận và rủi ro khá rõ. Ngành Bất động sản có lợi nhuận trung bình cao nhất và mức biến động thấp hơn ngành Thép, nhưng vẫn có rủi ro cao hơn VN-Index. Ngành Thép có lợi nhuận trung bình thấp hơn Bất động sản nhưng biến động lớn nhất và MDD sâu nhất. Trong khi đó, VN-Index có lợi nhuận trung bình năm xấp xỉ thấp hơn Bất động sản nhưng mức biến động và sụt giảm tối đa thấp hơn đáng kể. Vì vậy, nhà đầu tư cần cân nhắc giữa khả năng sinh lời và mức độ rủi ro chấp nhận được khi lựa chọn đầu tư vào từng ngành.*
+
+*Kết luận:*
+*Qua kết quả phân tích, ngành Bất động sản có lợi nhuận trung bình ngày và lợi nhuận trung bình năm xấp xỉ cao nhất, đồng thời có mức biến động thấp hơn ngành Thép. Tuy nhiên, cả hai ngành đều có độ lệch chuẩn năm và mức sụt giảm tối đa (MDD) cao hơn VN-Index, cho thấy rủi ro đầu tư lớn hơn thị trường chung. Trong đó, ngành Thép có mức biến động và sụt giảm tối đa lớn nhất, còn VN-Index có mức biến động thấp nhất và khả năng hạn chế sụt giảm tốt hơn trong giai đoạn nghiên cứu.*
+*Nhìn chung, ngành Bất động sản có sự cân bằng tương đối tốt hơn giữa lợi nhuận và rủi ro so với ngành Thép, trong khi VN-Index phù hợp hơn với mục tiêu hạn chế biến động. Kết quả cho thấy nhà đầu tư cần cân nhắc đồng thời lợi nhuận kỳ vọng, mức độ biến động và khả năng chịu sụt giảm khi lựa chọn danh mục đầu tư; lợi nhuận cao hơn không đồng nghĩa với lựa chọn đầu tư an toàn hơn.*
+
+# 6. Hạn chế của phương pháp
+
+*Phương pháp phân tích vẫn còn một số hạn chế nhất định. Thứ nhất, dữ liệu được sử dụng trong giai đoạn 2021–2025 và giá đầu vào là giá đóng cửa thông thường (Close), do đó kết quả có thể chưa phản ánh đầy đủ ảnh hưởng của các sự kiện doanh nghiệp như chia cổ tức hoặc điều chỉnh giá cổ phiếu. Thứ hai, lợi nhuận năm được ước tính bằng lợi nhuận trung bình ngày nhân với 252 phiên giao dịch, nên chỉ mang tính xấp xỉ, không phản ánh chính xác lợi nhuận tích lũy thực tế trong năm. Thứ ba, mỗi ngành chỉ được đại diện bởi hai cổ phiếu, vì vậy kết quả so sánh chưa thể khái quát đầy đủ tình hình của toàn ngành. Ngoài ra, việc điền hoặc thay thế dữ liệu thiếu có thể ảnh hưởng đến kết quả tính toán và các chỉ tiêu thống kê. Cuối cùng, kết quả phân tích phụ thuộc vào giai đoạn dữ liệu được lựa chọn và phương pháp xử lý dữ liệu, do đó cần thận trọng khi sử dụng để đưa ra nhận định cho các giai đoạn khác.:*
+
+
+# 7. Kết luận chung
+
+*Qua phân tích dữ liệu giai đoạn 2021–2025, ngành Bất động sản có lợi nhuận trung bình ngày cao hơn ngành Thép và VN-Index, với mức lợi nhuận năm xấp xỉ lần lượt là 16,16%, 11,59% và 11,41%. Về rủi ro, ngành Thép có độ lệch chuẩn năm cao hơn ngành Bất động sản, tương ứng 37,57% và 35,76%; đồng thời, mức sụt giảm tối đa (Maximum Drawdown) của ngành Thép là -77,09%, lớn hơn về mức độ sụt giảm so với ngành Bất động sản (-67,43%) và VN-Index (-40,34%). Trong khi đó, VN-Index có độ biến động và mức sụt giảm tối đa thấp hơn cả hai ngành trong giai đoạn nghiên cứu. Nhìn chung, ngành Bất động sản có lợi nhuận trung bình cao hơn, còn ngành Thép có mức độ rủi ro cao hơn theo các chỉ tiêu được xem xét; tuy nhiên, lợi nhuận cao hơn không đồng nghĩa với rủi ro thấp hơn, và các kết quả này chỉ phản ánh dữ liệu cùng phương pháp phân tích đã lựa chọn.*
+
+
+# Phụ lục. Danh sách file CSV đầu ra
+
+Code trong báo cáo tạo/cập nhật 4 file trong thư mục `Output/tables`:
+
+1. `loi_nhuan_hang_ngay.csv` — lợi nhuận từng mã theo ngày.
+2. `loi_nhuan_hang_ngay_theo_nganh.csv` — lợi nhuận ngành và VN-Index theo ngày.
+3. `thong_ke_loi_nhuan_rui_ro_tung_ma.csv` — thống kê từng mã.
+4. `so_sanh_loi_nhuan_rui_ro_theo_nganh.csv` — thống kê so sánh ngành.
+
+Báo cáo hiển thị 10 dòng đầu của bảng theo ngày và các bảng thống kê tổng hợp; CSV chứa toàn bộ kết quả để xem riêng hoặc dùng cho phân tích tiếp theo.
